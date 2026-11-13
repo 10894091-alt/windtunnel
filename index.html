@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wind Tunnel Lab</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171e26; --line:#26313d; --text:#e6edf3; --muted:#8b98a6;
+    --accent:#4cc2ff; --accent2:#ffb454; --good:#7ee787;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  .stage{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#000}
+  canvas#tunnel{display:block;width:100%;height:auto;touch-action:none;cursor:crosshair}
+  .hint{position:absolute;left:10px;bottom:8px;font-size:12px;color:#ffffffb0;pointer-events:none;text-shadow:0 1px 2px #000}
+  .toast{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:#3a1d1d;border:1px solid #7a3434;color:#ffd7d7;padding:6px 12px;border-radius:8px;font-size:13px;display:none}
+  .grid{display:grid;grid-template-columns:1.35fr 1fr;gap:12px;margin-top:12px}
+  @media (max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin:0 0 8px}
+  .row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  button{background:#202a35;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:6px 10px;font:inherit;cursor:pointer}
+  button:hover{border-color:#3b4a5a}
+  button.on{background:#123247;border-color:var(--accent);color:#fff}
+  label.slider{display:grid;grid-template-columns:120px 1fr 64px;align-items:center;gap:8px;margin:6px 0}
+  label.slider span.v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  input[type=range]:disabled{opacity:.35}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .stat{background:#111820;border:1px solid var(--line);border-radius:8px;padding:8px}
+  .stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .stat .n{font-size:22px;font-variant-numeric:tabular-nums}
+  .regime{margin:10px 0 6px;padding:8px;border-radius:8px;background:#111820;border:1px solid var(--line)}
+  .regime b{color:var(--accent2)}
+  canvas#chart{width:100%;height:110px;display:block;background:#111820;border:1px solid var(--line);border-radius:8px}
+  .legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:4px}
+  .legend i{display:inline-block;width:10px;height:3px;vertical-align:middle;margin-right:5px}
+  .colorbar{height:10px;border-radius:5px;margin-top:6px}
+  .cbl{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+  select{background:#202a35;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:6px}
+  .check{display:flex;align-items:center;gap:6px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage">
+    <canvas id="tunnel" width="900" height="360"></canvas>
+    <div class="hint">Drag on the tunnel to draw (or erase) obstacles · wind blows left → right</div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Shape</h2>
+      <div class="row" id="shapes">
+        <button data-shape="cylinder" class="on">Cylinder</button>
+        <button data-shape="airfoil">Airfoil</button>
+        <button data-shape="plate">Flat plate</button>
+        <button data-shape="teardrop">Teardrop</button>
+        <button data-shape="square">Square</button>
+        <button data-shape="none">Empty</button>
+      </div>
+      <label class="slider">Angle of attack <input id="angle" type="range" min="-30" max="90" step="1" value="0"><span class="v" id="angleV">0°</span></label>
+      <div class="row">
+        <button id="drawBtn" class="on">✏️ Draw</button>
+        <button id="eraseBtn">🧽 Erase</button>
+        <label class="slider" style="grid-template-columns:70px 1fr 40px;flex:1;margin:0 0 0 8px">Brush <input id="brush" type="range" min="1" max="8" value="3"><span class="v" id="brushV">3</span></label>
+      </div>
+
+      <h2 style="margin-top:6px">Flow</h2>
+      <label class="slider">Wind speed <input id="speed" type="range" min="0.02" max="0.12" step="0.005" value="0.08"><span class="v" id="speedV"></span></label>
+      <label class="slider">Viscosity <input id="visc" type="range" min="0.008" max="0.12" step="0.001" value="0.02"><span class="v" id="viscV"></span></label>
+      <label class="slider">Sim speed <input id="spf" type="range" min="1" max="30" step="1" value="12"><span class="v" id="spfV"></span></label>
+
+      <div class="row" style="align-items:center;margin-top:8px">
+        <button id="playBtn">⏸ Pause</button>
+        <button id="resetBtn">↺ Restart flow</button>
+        <select id="view">
+          <option value="speed">Color: speed</option>
+          <option value="vort">Color: spin (vorticity)</option>
+          <option value="press">Color: pressure</option>
+        </select>
+        <label class="check"><input type="checkbox" id="tracers" checked> Smoke tracers</label>
+      </div>
+      <div class="colorbar" id="cbar"></div>
+      <div class="cbl" id="cbl"><span></span><span></span></div>
+    </div>
+
+    <div class="card">
+      <h2>Measurements</h2>
+      <div class="stats">
+        <div class="stat"><div class="k">Reynolds no.</div><div class="n" id="re">—</div></div>
+        <div class="stat"><div class="k">Drag coeff.</div><div class="n" id="cd">—</div></div>
+        <div class="stat"><div class="k">Lift coeff.</div><div class="n" id="cl">—</div></div>
+      </div>
+      <div class="regime" id="regime">—</div>
+      <canvas id="chart" width="600" height="220"></canvas>
+      <div class="legend"><span><i style="background:var(--accent2)"></i>drag C<sub>d</sub></span><span><i style="background:var(--accent)"></i>lift C<sub>l</sub></span><span>(last ~10 s)</span></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+// SIM-START
+// ---------- Lattice-Boltzmann core (D2Q9, BGK) ----------
+const NX = 300, NY = 120, N = NX * NY;
+const EX = [0, 1, 0, -1, 0, 1, -1, -1, 1];
+const EY = [0, 0, 1, 0, -1, 1, 1, -1, -1];
+const WT = [4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36];
+const OPP = [0, 3, 4, 1, 2, 7, 8, 5, 6];
+
+let f  = new Float32Array(9 * N);
+let fn = new Float32Array(9 * N);
+const rho = new Float32Array(N), ux = new Float32Array(N), uy = new Float32Array(N);
+const solid = new Uint8Array(N);
+const sim = { U: 0.08, nu: 0.02 };
+
+function setEq(arr, idx, r, u, v) {
+  const usq = 1.5 * (u * u + v * v);
+  for (let i = 0; i < 9; i++) {
+    const eu = 3 * (EX[i] * u + EY[i] * v);
+    arr[i * N + idx] = WT[i] * r * (1 + eu + 0.5 * eu * eu - usq);
+  }
+}
+
+function initFlow() {
+  for (let idx = 0; idx < N; idx++) {
+    const u = solid[idx] ? 0 : sim.U;
+    // tiny sideways nudge behind the shape so symmetric wakes can start shedding
+    const x = idx % NX, v = solid[idx] ? 0 : 0.04 * sim.U * Math.exp(-(((x - NX * 0.38) / 12) ** 2));
+    setEq(f, idx, 1, u, v); setEq(fn, idx, 1, u, v);
+    rho[idx] = 1; ux[idx] = u; uy[idx] = v;
+  }
+}
+
+// One time step. Returns the force on all solids (lattice units, y pointing down).
+function step() {
+  const om = 1 / (3 * sim.nu + 0.5);
+  // 1) collide (in place) + store macroscopic fields
+  for (let idx = 0; idx < N; idx++) {
+    if (solid[idx]) { ux[idx] = 0; uy[idx] = 0; rho[idx] = 1; continue; }
+    let r = 0, mx = 0, my = 0;
+    for (let i = 0; i < 9; i++) { const v = f[i * N + idx]; r += v; mx += EX[i] * v; my += EY[i] * v; }
+    const u = mx / r, v = my / r;
+    rho[idx] = r; ux[idx] = u; uy[idx] = v;
+    const usq = 1.5 * (u * u + v * v);
+    for (let i = 0; i < 9; i++) {
+      const eu = 3 * (EX[i] * u + EY[i] * v);
+      const k = i * N + idx;
+      f[k] += om * (WT[i] * r * (1 + eu + 0.5 * eu * eu - usq) - f[k]);
+    }
+  }
+  // 2) stream (pull) with half-way bounce-back; momentum exchange for force
+  let Fx = 0, Fy = 0;
+  for (let y = 1; y < NY - 1; y++) {
+    for (let x = 1; x < NX - 1; x++) {
+      const idx = y * NX + x;
+      if (solid[idx]) continue;
+      fn[idx] = f[idx];
+      for (let i = 1; i < 9; i++) {
+        const src = idx - EX[i] - EY[i] * NX;
+        if (solid[src]) {
+          const d = OPP[i], val = f[d * N + idx];
+          fn[i * N + idx] = val;
+          Fx += 2 * val * EX[d]; Fy += 2 * val * EY[d];
+        } else {
+          fn[i * N + idx] = f[i * N + src];
+        }
+      }
+    }
+  }
+  // 3) boundaries: inlet + top/bottom held at free stream, outlet zero-gradient
+  for (let x = 0; x < NX; x++) { setEq(fn, x, 1, sim.U, 0); setEq(fn, (NY - 1) * NX + x, 1, sim.U, 0); }
+  for (let y = 1; y < NY - 1; y++) {
+    setEq(fn, y * NX, 1, sim.U, 0);
+    const a = y * NX + NX - 1, b = a - 1;
+    for (let i = 0; i < 9; i++) fn[i * N + a] = fn[i * N + b];
+  }
+  const t = f; f = fn; fn = t;
+  return [Fx, Fy];
+}
+
+// ---------- Shapes ----------
+function bodyFrame(x, y, px, py, deg) {
+  const a = deg * Math.PI / 180, dx = x - px, dyUp = -(y - py);
+  return [dx * Math.cos(a) - dyUp * Math.sin(a), dx * Math.sin(a) + dyUp * Math.cos(a)];
+}
+function insideShape(name, x, y, deg) {
+  const px = NX * 0.25, py = NY / 2;
+  if (name === "cylinder") { const r = NY * 0.1; return (x - px) ** 2 + (y - py) ** 2 <= r * r; }
+  const [bx, by] = bodyFrame(x, y, px, py, deg);
+  if (name === "square") { const h = NY * 0.09; return Math.abs(bx) <= h && Math.abs(by) <= h; }
+  if (name === "plate") { return Math.abs(bx) <= NY * 0.18 && Math.abs(by) <= 1.3; }
+  if (name === "teardrop") {
+    const R = NY * 0.1, L = R * 3.2;
+    if (bx <= 0) return bx * bx + by * by <= R * R;
+    return bx <= L && Math.abs(by) <= R * Math.pow(1 - bx / L, 1.15);
+  }
+  if (name === "airfoil") { // NACA 2412, pivot at quarter chord
+    const c = NY * 0.45, xc = (bx + c / 4) / c;
+    if (xc < 0 || xc > 1) return false;
+    const m = 0.02, p = 0.4, t = 0.12;
+    const yt = 5 * t * (0.2969 * Math.sqrt(xc) - 0.126 * xc - 0.3516 * xc * xc + 0.2843 * xc ** 3 - 0.1015 * xc ** 4);
+    const yc = xc < p ? m / (p * p) * (2 * p * xc - xc * xc) : m / ((1 - p) ** 2) * ((1 - 2 * p) + 2 * p * xc - xc * xc);
+    return Math.abs(by / c - yc) <= Math.max(yt, 0.012);
+  }
+  return false;
+}
+function buildShape(name, deg) {
+  solid.fill(0);
+  for (let y = 2; y < NY - 2; y++) for (let x = 2; x < NX - 2; x++)
+    if (insideShape(name, x + 0.5, y + 0.5, deg)) solid[y * NX + x] = 1;
+}
+// reference length for Re and coefficients: chord for the airfoil, frontal height otherwise
+function refLength(name) {
+  const h = frontalHeight();
+  return h && name === "airfoil" ? Math.round(NY * 0.45) : h;
+}
+function frontalHeight() {
+  let lo = NY, hi = -1;
+  for (let y = 0; y < NY; y++) for (let x = 0; x < NX; x++)
+    if (solid[y * NX + x]) { if (y < lo) lo = y; if (y > hi) hi = y; break; }
+  return hi < 0 ? 0 : hi - lo + 1;
+}
+// SIM-END
+
+// ---------- UI / rendering ----------
+const $ = id => document.getElementById(id);
+const cv = $("tunnel"), ctx = cv.getContext("2d");
+const off = document.createElement("canvas"); off.width = NX; off.height = NY;
+const octx = off.getContext("2d"), img = octx.createImageData(NX, NY);
+const SX = cv.width / NX, SY = cv.height / NY;
+
+let shape = "cylinder", angle = 0, running = true, spf = 12, view = "speed";
+let tool = "draw", brush = 3, L = 0, Fema = [0, 0], emaReady = false;
+const hist = [];
+
+function lerpStops(stops, t) {
+  t = Math.min(1, Math.max(0, t));
+  const s = t * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(s)), k = s - i;
+  const a = stops[i], b = stops[i + 1];
+  return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+}
+const SEQ = [[8, 12, 40], [30, 40, 120], [20, 110, 170], [40, 180, 160], [170, 220, 90], [255, 240, 120]];
+const DIV = [[40, 90, 220], [110, 170, 245], [20, 24, 30], [245, 150, 90], [220, 50, 40]];
+function makeLUT(stops) { const l = new Uint8ClampedArray(256 * 3); for (let i = 0; i < 256; i++) { const c = lerpStops(stops, i / 255); l.set(c, i * 3); } return l; }
+const LUT_SEQ = makeLUT(SEQ), LUT_DIV = makeLUT(DIV);
+const DIV_LIGHT = makeLUT([[40, 90, 220], [140, 185, 245], [235, 238, 242], [245, 165, 110], [220, 50, 40]]);
+
+function updateColorbar() {
+  const stops = view === "speed" ? SEQ : (view === "press" ? [[40,90,220],[140,185,245],[235,238,242],[245,165,110],[220,50,40]] : DIV);
+  $("cbar").style.background = "linear-gradient(90deg," + stops.map(c => `rgb(${c})`).join(",") + ")";
+  const lab = { speed: ["still", "fast"], vort: ["clockwise spin", "counter-clockwise"], press: ["low pressure", "high pressure"] }[view];
+  $("cbl").children[0].textContent = lab[0]; $("cbl").children[1].textContent = lab[1];
+}
+
+function render() {
+  const d = img.data, U = sim.U;
+  for (let y = 0; y < NY; y++) for (let x = 0; x < NX; x++) {
+    const idx = y * NX + x, p = idx * 4;
+    if (solid[idx]) { d[p] = 205; d[p + 1] = 212; d[p + 2] = 222; d[p + 3] = 255; continue; }
+    let li, lut;
+    if (view === "speed") {
+      lut = LUT_SEQ; li = Math.sqrt(ux[idx] ** 2 + uy[idx] ** 2) / (U * 1.7);
+    } else if (view === "vort") {
+      lut = LUT_DIV;
+      if (x === 0 || y === 0 || x === NX - 1 || y === NY - 1) li = 0.5;
+      else {
+        // screen y points down, so flip sign to get counter-clockwise = positive
+        const w = -((uy[idx + 1] - uy[idx - 1]) - (ux[idx + NX] - ux[idx - NX])) * 0.5;
+        const t = Math.max(-1, Math.min(1, w / (0.25 * U)));
+        li = 0.5 + 0.5 * Math.sign(t) * Math.sqrt(Math.abs(t));
+      }
+    } else {
+      lut = DIV_LIGHT; const cp = (rho[idx] - 1) / 3 / (0.5 * U * U);
+      li = 0.5 + 0.5 * Math.max(-1, Math.min(1, cp / 1.2));
+    }
+    const j = (Math.max(0, Math.min(1, li)) * 255 | 0) * 3;
+    d[p] = lut[j]; d[p + 1] = lut[j + 1]; d[p + 2] = lut[j + 2]; d[p + 3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, 0, 0, cv.width, cv.height);
+  if ($("tracers").checked) drawTracers();
+}
+
+// Smoke tracers released from a rake at the inlet
+const NT = 2400, tx = new Float32Array(NT), ty = new Float32Array(NT), RAKE = 30;
+function spawn(i, anywhere) {
+  tx[i] = anywhere ? Math.random() * NX : Math.random() * 2;
+  ty[i] = (Math.floor(Math.random() * RAKE) + 0.5) * (NY / RAKE) + (Math.random() - 0.5) * 0.6;
+}
+for (let i = 0; i < NT; i++) spawn(i, true);
+function moveTracers(steps) {
+  for (let i = 0; i < NT; i++) {
+    const cx = tx[i] | 0, cy = ty[i] | 0;
+    if (cx < 0 || cy < 0 || cx >= NX || cy >= NY) { spawn(i, false); continue; }
+    const idx = cy * NX + cx;
+    if (solid[idx]) { spawn(i, false); continue; }
+    tx[i] += ux[idx] * steps; ty[i] += uy[idx] * steps;
+  }
+}
+function drawTracers() {
+  ctx.fillStyle = view === "press" ? "rgba(20,25,35,.55)" : "rgba(255,255,255,.6)";
+  for (let i = 0; i < NT; i++) ctx.fillRect(tx[i] * SX - 0.9, ty[i] * SY - 0.9, 1.8, 1.8);
+}
+
+function drawChart() {
+  const c = $("chart"), g = c.getContext("2d"), w = c.width, h = c.height;
+  g.clearRect(0, 0, w, h);
+  if (hist.length < 2) return;
+  let lo = 0, hi = 0;
+  for (const [a, b] of hist) { lo = Math.min(lo, a, b); hi = Math.max(hi, a, b); }
+  const pad = (hi - lo) * 0.15 + 0.05; lo -= pad; hi += pad;
+  const Y = v => h - (v - lo) / (hi - lo) * h, X = i => i / (hist.length - 1) * w;
+  g.strokeStyle = "#2b3644"; g.lineWidth = 1; g.beginPath(); g.moveTo(0, Y(0)); g.lineTo(w, Y(0)); g.stroke();
+  g.fillStyle = "#8b98a6"; g.font = "20px system-ui"; g.fillText("0", 4, Y(0) - 4);
+  for (const [k, col] of [[0, "#ffb454"], [1, "#4cc2ff"]]) {
+    g.strokeStyle = col; g.lineWidth = 3; g.beginPath();
+    hist.forEach((v, i) => i ? g.lineTo(X(i), Y(v[k])) : g.moveTo(X(i), Y(v[k])));
+    g.stroke();
+  }
+}
+
+function regimeText(re) {
+  if (!L) return "No obstacle. Draw one or pick a shape.";
+  if (re < 5) return "<b>Creeping flow:</b> viscosity wins and the flow hugs the shape on both sides.";
+  if (re < 45) return "<b>Steady wake:</b> a pair of trapped eddies sits behind the shape.";
+  if (re < 180) return "<b>Vortex street:</b> eddies peel off one side, then the other (watch C<sub>l</sub> oscillate).";
+  return "<b>Chaotic wake:</b> strong, irregular shedding. In 3D this would be turning turbulent.";
+}
+
+function showToast(msg) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(showToast.h); showToast.h = setTimeout(() => t.style.display = "none", 3500); }
+
+function shapeChanged(reinit) {
+  L = refLength(shape);
+  if (reinit) { initFlow(); hist.length = 0; emaReady = false; for (let i = 0; i < NT; i++) spawn(i, true); }
+}
+
+let frame = 0;
+function loop() {
+  if (running) {
+    let fx = 0, fy = 0;
+    for (let s = 0; s < spf; s++) { const F = step(); fx += F[0]; fy += F[1]; }
+    fx /= spf; fy /= spf;
+    // stability guard
+    let bad = false;
+    for (let k = 0; k < N; k += 97) if (!(Math.abs(ux[k]) < 0.4) || !(rho[k] > 0.5 && rho[k] < 2)) { bad = true; break; }
+    if (bad) {
+      sim.nu = Math.min(0.12, sim.nu * 1.5); $("visc").value = sim.nu; syncLabels();
+      showToast("The flow went unstable, so viscosity was raised. Lower wind speed also helps.");
+      shapeChanged(true);
+    } else {
+      const a = 0.05;
+      if (!emaReady) { Fema = [fx, fy]; emaReady = true; }
+      Fema[0] += a * (fx - Fema[0]); Fema[1] += a * (fy - Fema[1]);
+      moveTracers(spf);
+      if (++frame % 2 === 0 && L) {
+        const q = 0.5 * sim.U * sim.U * L;
+        hist.push([fx / q, -fy / q]); if (hist.length > 300) hist.shift();
+      }
+    }
+  }
+  render();
+  const re = L ? sim.U * L / sim.nu : 0, q = 0.5 * sim.U * sim.U * L;
+  $("re").textContent = L ? re.toFixed(0) : "—";
+  $("cd").textContent = L ? (Fema[0] / q).toFixed(2) : "—";
+  $("cl").textContent = L ? (-Fema[1] / q).toFixed(2) : "—";
+  $("regime").innerHTML = regimeText(re);
+  if (frame % 2 === 0) drawChart();
+  requestAnimationFrame(loop);
+}
+
+// ---------- controls ----------
+function syncLabels() {
+  $("speedV").textContent = (+$("speed").value).toFixed(3);
+  $("viscV").textContent = (+$("visc").value).toFixed(3);
+  $("spfV").textContent = $("spf").value + "×";
+  $("angleV").textContent = $("angle").value + "°";
+  $("brushV").textContent = $("brush").value;
+}
+const DEFAULT_ANGLE = { cylinder: 0, airfoil: 8, plate: 90, teardrop: 0, square: 0, none: 0 };
+$("shapes").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#shapes button").forEach(x => x.classList.toggle("on", x === b));
+  shape = b.dataset.shape; angle = DEFAULT_ANGLE[shape];
+  $("angle").value = angle; $("angle").disabled = (shape === "cylinder" || shape === "none");
+  syncLabels(); buildShape(shape, angle); shapeChanged(true);
+});
+$("angle").addEventListener("input", e => {
+  angle = +e.target.value; syncLabels();
+  buildShape(shape, angle);
+  for (let i = 0; i < N; i++) if (solid[i]) { setEq(f, i, 1, 0, 0); }
+  shapeChanged(false); hist.length = 0;
+});
+$("speed").addEventListener("input", e => { sim.U = +e.target.value; syncLabels(); });
+$("visc").addEventListener("input", e => { sim.nu = +e.target.value; syncLabels(); });
+$("spf").addEventListener("input", e => { spf = +e.target.value; syncLabels(); });
+$("brush").addEventListener("input", e => { brush = +e.target.value; syncLabels(); });
+$("view").addEventListener("change", e => { view = e.target.value; updateColorbar(); });
+$("playBtn").addEventListener("click", () => { running = !running; $("playBtn").textContent = running ? "⏸ Pause" : "▶ Play"; });
+$("resetBtn").addEventListener("click", () => shapeChanged(true));
+$("drawBtn").addEventListener("click", () => { tool = "draw"; $("drawBtn").classList.add("on"); $("eraseBtn").classList.remove("on"); });
+$("eraseBtn").addEventListener("click", () => { tool = "erase"; $("eraseBtn").classList.add("on"); $("drawBtn").classList.remove("on"); });
+
+let painting = false;
+function paint(ev) {
+  const r = cv.getBoundingClientRect();
+  const gx = (ev.clientX - r.left) / r.width * NX, gy = (ev.clientY - r.top) / r.height * NY;
+  const R = brush;
+  for (let y = Math.max(2, Math.floor(gy - R)); y <= Math.min(NY - 3, Math.ceil(gy + R)); y++)
+    for (let x = Math.max(2, Math.floor(gx - R)); x <= Math.min(NX - 3, Math.ceil(gx + R)); x++) {
+      if ((x + 0.5 - gx) ** 2 + (y + 0.5 - gy) ** 2 > R * R) continue;
+      const idx = y * NX + x, want = tool === "draw" ? 1 : 0;
+      if (solid[idx] !== want) { solid[idx] = want; setEq(f, idx, 1, 0, 0); setEq(fn, idx, 1, 0, 0); }
+    }
+  shapeChanged(false);
+}
+cv.addEventListener("pointerdown", e => { painting = true; cv.setPointerCapture(e.pointerId); paint(e); });
+cv.addEventListener("pointermove", e => { if (painting) paint(e); });
+cv.addEventListener("pointerup", () => { painting = false; });
+cv.addEventListener("pointercancel", () => { painting = false; });
+
+$("angle").disabled = true;
+syncLabels(); updateColorbar();
+buildShape(shape, angle); shapeChanged(true);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
